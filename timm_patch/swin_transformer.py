@@ -7,7 +7,8 @@ import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
 
-from .layers import DropPath, to_2tuple
+# from .layers import DropPath, to_2tuple
+from timm.layers import DropPath, to_2tuple
 
 class Mlp(nn.Module):
     """ MLP as used in Vision Transformer, MLP-Mixer and related networks
