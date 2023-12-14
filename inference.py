@@ -1,4 +1,6 @@
-import argparse
+import os
+from tqdm.auto import tqdm
+import soundfile as sf
 import pathlib
 pathlib.PosixPath = pathlib.WindowsPath
 
@@ -7,6 +9,7 @@ import matplotlib.pyplot as plt
 from PIL import Image
 import numpy as np
 import torchaudio
+import librosa
 import torch
 
 import models_mae
@@ -15,22 +18,29 @@ import models_mae
 def wav2fbank(filename, melbins, target_length):
     waveform, sr = torchaudio.load(filename)
     waveform = waveform - waveform.mean()
-    print(sr)
 
     fbank = kaldi.fbank(
         waveform, htk_compat=True, sample_frequency=sr, use_energy=False, 
         window_type='hanning', num_mel_bins=melbins, dither=0.0, frame_shift=10
     )
+    # y, sr = librosa.load(filename)
+    # fbank = librosa.feature.mfcc(y=y, sr=sr)
+    # waveform, sr = librosa.load(filename)
+    # fbank = librosa.feature.melspectrogram(y=waveform, sr=sr, n_mels=melbins)
+    # fbank = fbank.transpose()
+    print("sdjnfivn", fbank.shape)
 
     n_frames = fbank.shape[0]
     p = target_length - n_frames
 
     if p > 0:
         m = torch.nn.ZeroPad2d((0, 0, 0, p))
-        fbank = m(fbank)
+        fbank = m(torch.Tensor(fbank))
     elif p < 0:
         fbank = fbank[0:target_length, :]
-    return fbank
+    fbank = torch.Tensor(fbank)
+    print("sdjnfivn", fbank.shape)
+    return fbank, sr
 
 def norm_fbank(fbank):
     norm_mean= -4.2677393
@@ -51,6 +61,29 @@ def display_images(data, minmin, maxmax):
         axes[i].axis('off')
     plt.show()
     
+def save_audio_files(data, sr):
+    os.makedirs("audio_files_output", exist_ok=True)
+    for i, bank in tqdm(enumerate(data)):
+        audio_path = os.path.join(".", "audio_files_output")
+        audio_path = os.path.join(audio_path, str(i) + ".wav")
+
+        n_fft = 2048
+        hop_length = 512
+        win_length = 2048
+        power = 1.0
+        center = True
+
+        y = librosa.feature.inverse.mel_to_audio(
+            bank.T.numpy(),
+            n_fft=n_fft,
+            hop_length=hop_length,
+            win_length=win_length,
+            power=power,
+            center=center,
+            n_iter=25
+        )
+        sf.write(audio_path, y, sr)
+    
 def prepare_model(chkpt_dir, arch='mae_vit_base_patch16'):
     model = getattr(models_mae, arch)(in_chans=1, audio_exp=True,img_size=(1024,128),decoder_mode=1,decoder_depth=16)
     checkpoint = torch.load(chkpt_dir, map_location='cpu')
@@ -65,17 +98,15 @@ def main(args):
     MELBINS=128
     TARGET_LEN=1024
     
-    # extract audio features
-    fbank = wav2fbank(wav_file, MELBINS, TARGET_LEN)
+    fbank, sr = wav2fbank(wav_file, MELBINS, TARGET_LEN)
     fbank = norm_fbank(fbank)
     
-    # load model
     model = prepare_model(checkpoint_path)
     
     x = torch.tensor(fbank)
     x = x.unsqueeze(dim=0).unsqueeze(dim=0)
     
-    _, y, mask, _ = model(x.float(), mask_ratio=0.1)
+    _, y, mask, _ = model(x.float(), mask_ratio=0.6)
     y = model.unpatchify(y)
     y = torch.einsum('nchw->nhwc', y).detach().cpu()
     
@@ -95,13 +126,18 @@ def main(args):
     maxmax *= 1
     minmin=-10
     maxmax=10
-    start=200
-    end=800
+    start=0
+    end=-1
     
     original = x[0][start:end].squeeze()
     masked = im_masked2[0][start:end].squeeze()
     resulted = y[0][start:end].squeeze()
     final = im_paste[0][start:end].squeeze()
+    
+    save_audio_files(
+        data = [original, masked, resulted, final],
+        sr = sr 
+    )
     
     display_images(
         data = [original, masked, resulted, final],
@@ -110,6 +146,6 @@ def main(args):
 
 if __name__ == "__main__":
     args={}
-    args["wav_path"] = r"D:\AudioMAE\Beijing Police car siren.wav"
+    args["wav_path"] = r"D:\AudioMAE\acoustic-guitar-loop-f-91bpm-132687.wav"
     args["checkpoint_path"] = r"D:\AudioMAE\pretrained.pth"
     main(args)
